@@ -27,13 +27,17 @@ Run through the relevant sections after writing or modifying Helm values. Not ev
 
 ## Image
 
+**CRITICAL: Always verify the latest stable image tag before deploying.** Stale image tags are one of the most common deployment mistakes — you pin a version once and forget about it for months while security patches and bug fixes ship. Use web search, Docker Hub, or MCP tools to confirm the current latest stable release.
+
+- [ ] **Latest stable version verified via web/MCP** — before writing or reviewing image tags, search Docker Hub / GitHub releases / official docs to confirm the current latest stable release. Do not rely on memory or training data — versions change frequently.
+- [ ] **Image tag pinned to exact version + digest** — e.g. `postgres:18.3-bookworm@sha256:abcd...`. The digest makes the tag truly immutable. Version-only tags (`postgres:18.3`) can be overwritten by the publisher.
 - [ ] **Image repository confirmed** — correct registry, correct image name.
-- [ ] **Image tag pinned to a specific version** — `nginx:1.25.3`, not `nginx:latest` or `nginx:1`. Floating tags mean your deployments aren't reproducible.
 - [ ] **Not using `latest`** — ever. It's mutable, uncacheable with `IfNotPresent`, and makes rollbacks impossible.
-- [ ] **Latest approved stable tag checked** — verify the pinned tag is actually the version you want, not something stale from months ago.
-- [ ] **`imagePullPolicy` reviewed** — `IfNotPresent` for immutable tags (version numbers). `Always` only if you're using a mutable tag (which you shouldn't in production).
+- [ ] **Not using major-only tags** — `postgres:18` or `nginx:1` are floating tags that silently change under you on every pull.
+- [ ] **`imagePullPolicy` reviewed** — `IfNotPresent` for immutable tags (version + digest). `Always` only if you're using a mutable tag (which you shouldn't in production).
 - [ ] **Image exists and is accessible** — typos in image names, private registry without `imagePullSecrets`, wrong architecture (amd64 image on arm64 node) are all common failures.
 - [ ] **`imagePullSecrets` set for private registries** — without this, the kubelet can't authenticate to pull the image.
+- [ ] **Multi-arch support checked** — if deploying to ARM64 nodes (Raspberry Pi, Graviton), verify the image has an arm64 manifest. Most official images do; many community images don't.
 
 ## Replicas / Scaling
 
@@ -50,7 +54,7 @@ Every container must declare resource requests. Without them, the scheduler is g
 - [ ] **CPU requests defined** — tells the scheduler how much CPU to reserve. Start low (10-100m for most services) and adjust from observed usage.
 - [ ] **Memory requests defined** — must reflect the actual working set. Too low and the pod gets evicted under pressure; too high and you waste capacity.
 - [ ] **Memory limits defined** — the hard ceiling. Without a limit, a memory leak in one pod can OOM-kill unrelated pods on the same node. Set to 1.5-2x the request as a starting point.
-- [ ] **CPU limits intentionally omitted (default)** — CPU limits cause throttling, which creates latency spikes. Omit them by default. Only set CPU limits for background/batch workloads where you don't care about latency, or for very small pods that should stay small.
+- [ ] **CPU limits set intentionally** — for long-running services (web servers, APIs), omit CPU limits to avoid throttling-induced latency spikes. For background/batch workloads (CronJobs, workers, init containers), set CPU limits to prevent them from starving other pods on the node.
 - [ ] **Requests do not exceed limits** — this is an invalid configuration that Kubernetes will reject.
 - [ ] **Init containers have resources** — they compete for node resources during startup. An init container without limits can starve the node while it runs.
 - [ ] **Sidecar containers have resources** — same reasoning. Every container in the pod needs resource declarations.
@@ -88,8 +92,11 @@ Probes are how Kubernetes knows whether your container is working. Without them,
 
 ## Security
 
+Security must be hardened by default, not bolted on after deployment. Every deployment should follow least-privilege principles at every layer.
+
 ### Pod Level
 - [ ] **`runAsNonRoot: true`** — prevents the container from running as root, even if the image's Dockerfile says `USER root`.
+- [ ] **`runAsUser` / `runAsGroup` set explicitly** — don't rely on the image default. Pin to the application's expected UID/GID (e.g. 999 for postgres, 65534 for nobody).
 - [ ] **`fsGroup` set** — ensures mounted volumes are accessible to the container's group. Without this, PVC mounts may be unreadable.
 - [ ] **`seccompProfile: RuntimeDefault`** — applies the container runtime's default syscall filter. No reason to skip this unless the app needs specific syscalls (very rare).
 
@@ -97,8 +104,20 @@ Probes are how Kubernetes knows whether your container is working. Without them,
 - [ ] **`readOnlyRootFilesystem: true`** — prevents writes to the container filesystem. Forces you to explicitly declare writable paths via emptyDir or PVC mounts.
 - [ ] **`allowPrivilegeEscalation: false`** — prevents processes from gaining more privileges than their parent.
 - [ ] **`capabilities.drop: [ALL]`** — drops all Linux capabilities. Add back only what's needed (e.g., `NET_BIND_SERVICE` for ports < 1024).
-- [ ] **EmptyDir mounts for /tmp, /run, /var/cache** — if using read-only root filesystem, the app still needs to write temp files somewhere.
+- [ ] **EmptyDir mounts for /tmp, /run, /var/cache** — if using read-only root filesystem, the app still needs to write temp files somewhere. Always set `sizeLimit` on emptyDir.
 - [ ] **No `privileged: true`** — gives the container full access to the host. Almost never needed. If you think you need it, you probably need a specific capability instead.
+- [ ] **`automountServiceAccountToken: false`** — unless the pod needs Kubernetes API access. Most application pods don't.
+
+### Application-Level Authentication
+- [ ] **No `trust` in pg_hba.conf or equivalent** — never allow unauthenticated connections, not even local socket. Use `scram-sha-256` (postgres), TLS client certs, or equivalent for every service.
+- [ ] **Strongest auth method used** — `scram-sha-256` over `md5` for PostgreSQL, bcrypt over plaintext for application passwords. Check what the application supports and use the strongest option.
+- [ ] **Default databases/schemas hardened** — `REVOKE CONNECT FROM PUBLIC` on template and default databases. `REVOKE ALL ON SCHEMA public FROM PUBLIC`. Prevent privilege creep from day one.
+- [ ] **Admin/debug endpoints disabled** — no phpMyAdmin, pgAdmin, Redis Commander exposed. No debug ports, profiling endpoints, or status pages accessible without auth.
+- [ ] **Password encryption enforced** — set `password_encryption = 'scram-sha-256'` or equivalent explicitly in config, not just in pg_hba.
+
+### Network Security
+- [ ] **Databases/caches not exposed via Ingress** — internal services should only be reachable within the cluster. No external LoadBalancer for databases.
+- [ ] **Replication restricted to pod CIDR** — if using streaming replication, pg_hba / ACLs should only allow from the pod network (e.g. `10.42.0.0/16`), not `0.0.0.0/0`.
 
 ## Service Account / RBAC
 
@@ -118,6 +137,7 @@ Probes are how Kubernetes knows whether your container is working. Without them,
 ## Secrets
 
 - [ ] **No secrets in plain text in values files** — Helm values end up in Helm release secrets stored in the cluster. Use external secret management (external-secrets, sealed-secrets, Vault) or the Terraform Helm provider's `set_sensitive`.
+- [ ] **No secrets in ConfigMaps** — passwords in initdb scripts end up in ConfigMaps. Use Secret references + env vars instead.
 - [ ] **Existing Secret references confirmed** — if referencing a pre-existing Secret, verify it exists in the target namespace with the expected keys.
 - [ ] **Secret keys/names checked** — typos in Secret names or key names fail silently (empty string) or loudly (pod won't start) depending on `optional` flag.
 - [ ] **DB/API credentials provided securely** — through Secret references, not env var literals in values.
@@ -160,6 +180,7 @@ Probes are how Kubernetes knows whether your container is working. Without them,
 ## Observability
 
 - [ ] **Metrics enabled if available** — most production charts expose Prometheus metrics. Enable them.
+- [ ] **Metrics exporter has resource limits** — exporter sidecars need their own requests/limits (e.g. 10m/32Mi request, 64Mi limit). Don't leave them unlimited.
 - [ ] **ServiceMonitor/PodMonitor enabled if needed** — for Prometheus-based monitoring stacks.
 - [ ] **Logs accessible** — verify the service logs to stdout/stderr (not just to files inside the container).
 - [ ] **Monitoring/alerting expectations known** — what should trigger an alert? CPU > 90%? Error rate > 1%?
@@ -196,8 +217,11 @@ Probes are how Kubernetes knows whether your container is working. Without them,
 
 ## Common Pitfalls
 
+- **Stale image tags** — the #1 silent issue. You pin `nginx:1.25.3` in January and deploy it in July while `1.27.1` has three CVE fixes. Always verify the latest stable release before deploying or reviewing. Use web search, Docker Hub API, or GitHub releases to check.
 - **Port name > 15 characters** — Kubernetes rejects port names longer than 15 characters (IANA constraint). `prometheus-metrics` is too long; use `prom-metrics`.
 - **Env var ordering** — in some charts, environment variables can reference each other. If `VAR_B` depends on `VAR_A`, `VAR_A` must be defined first. Not all chart templates preserve order.
 - **Empty string vs null** — in Helm values, `key: ""` and `key:` (null) are different. Some charts treat them differently. If removing a value, check whether the chart expects null or empty string.
 - **YAML gotchas** — `yes`/`no`/`on`/`off` are booleans in YAML 1.1. Quote them if you mean strings. Port `22` and version `1.20` are numbers — quote them if the chart expects strings.
 - **Large ConfigMaps** — Kubernetes has a 1MB limit on individual objects. If your values generate a ConfigMap with a large embedded config file, you'll hit this silently during `helm upgrade`.
+- **`trust` in pg_hba.conf** — allows unauthenticated connections. Never use `trust` in any environment, not even for local socket connections. Use `scram-sha-256`.
+- **Default `public` schema permissions** — PostgreSQL grants CREATE on the public schema to all users by default. Run `REVOKE ALL ON SCHEMA public FROM PUBLIC` in initdb.
