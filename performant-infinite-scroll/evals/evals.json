@@ -1,0 +1,51 @@
+{
+  "skill_name": "performant-infinite-scroll",
+  "evals": [
+    {
+      "id": 1,
+      "name": "nextjs-feed-from-scratch",
+      "prompt": "In my Next.js 16 App Router app, /feed currently loads all ~2000 posts from Postgres at once in a Server Component and renders them — it's slow and janky. Rows have a title, excerpt, author, and sometimes an image. Turn it into an infinite scroll that feels instant, and when I click into a post and hit back I want to land where I was. We use TanStack Query already.",
+      "expected_output": "Keyset-paginated GET route, server-rendered first page hydrated into useInfiniteQuery, virtualized list with id keys, prefetch ahead of the edge, a scroll-restoration strategy, a11y feed markup.",
+      "assertions": [
+        "Uses cursor/keyset pagination with a unique tiebreaker (not OFFSET)",
+        "Server-renders page one and hydrates it into TanStack Query (HydrationBoundary/dehydrate or initialData)",
+        "Later pages come from a GET Route Handler, not a Server Action",
+        "Virtualized list keyed by item id (getItemKey or equivalent), not index",
+        "Next page is triggered ahead of the last row (threshold/rootMargin), with an isFetchingNextPage guard",
+        "Concrete back-navigation scroll restoration mechanism (snapshot+offset, Activity/cacheComponents, or library cache)",
+        "Reserves image space (width/height or aspect-ratio) to avoid measurement jumps",
+        "Feed a11y: role=feed/aria-busy or equivalent, and focus handling or load-more fallback mentioned"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "chat-prepend-jumps",
+      "prompt": "our support chat panel (react 19, tanstack query useInfiniteQuery, react-window VariableSizeList) is a mess. when you scroll up and older messages load, the view jumps. and when a new websocket message arrives while you're reading old history it yanks you to the bottom. messages have variable height (markdown, sometimes images). rewrite the ChatPanel component properly.",
+      "expected_output": "End-anchored virtualizer (TanStack anchorTo:'end' + followOnAppend, or virtua shift) with stable id keys, fetchPreviousPage for history, follow only when pinned, jump-to-latest.",
+      "assertions": [
+        "Replaces react-window v1 VariableSizeList with a library that supports reverse/prepend anchoring (TanStack Virtual anchorTo end, virtua shift, or react-virtuoso)",
+        "Uses library anchoring rather than manual scrollTop += delta or column-reverse hacks",
+        "Stable message-id keys",
+        "Older history loaded via fetchPreviousPage/getPreviousPageParam (or equivalent prepend)",
+        "New messages only auto-follow when the user is pinned to the bottom",
+        "Provides a jump-to-latest affordance when not pinned",
+        "Handles variable heights via dynamic measurement (measureElement or library auto-measure)"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "diagnose-dupes-and-stall",
+      "prompt": "(see with_skill prompt in workspace) Offset pagination sorted by popularity + one-shot IntersectionObserver; diagnose duplicates and 4k-monitor stall.",
+      "expected_output": "Duplicates: offset shifting under inserts + non-unique sort (popularity ties) → keyset with id tiebreaker (and/or client dedupe for mutable popularity). Stall: IO fires only on change; sentinel stays visible after page 1 on tall screens → re-observe/re-check after each page. Also index keys → id keys, guard in-flight.",
+      "assertions": [
+        "Identifies OFFSET shifting under concurrent inserts as a cause of duplicates",
+        "Identifies non-unique sort (popularity ties) and adds an id tiebreaker",
+        "Addresses that popularity is mutable (dedupe by id client-side or snapshot)",
+        "Identifies that IntersectionObserver only fires on intersection changes so a still-visible sentinel never refires",
+        "Fix re-checks/re-observes after each page load (or loops until viewport filled)",
+        "Adds an in-flight/hasMore guard to prevent duplicate or endless requests",
+        "Replaces index keys with product id keys"
+      ]
+    }
+  ]
+}
