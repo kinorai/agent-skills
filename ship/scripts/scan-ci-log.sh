@@ -4,6 +4,7 @@
 # human or agent to read, not verdicts: expect some noise.
 #
 # Usage: scan-ci-log.sh <run-id> [max-lines-per-category]
+# Run from inside the repo: the jobs API call resolves {owner}/{repo} from it.
 set -euo pipefail
 
 run_id=${1:?usage: scan-ci-log.sh <run-id> [max-lines-per-category]}
@@ -14,13 +15,13 @@ trap 'rm -f "$log"' EXIT
 
 # `gh run view --log` prints "<job>\t<step>\t<timestamp> <line>"; drop the
 # timestamp and ANSI colours so matches read cleanly.
-gh run view "$run_id" --log 2>/dev/null \
+gh run view "$run_id" --log \
   | sed -E 's/\x1b\[[0-9;]*[A-Za-z]//g; s/\t[0-9]{4}-[0-9]{2}-[0-9]{2}T[^ ]+ /\t/' \
   | grep -v -F '##[command]' \
   > "$log"
 
 if [[ ! -s $log ]]; then
-  echo "No log for run $run_id (still running, expired, or no access)." >&2
+  echo "Empty log for run $run_id: it may still be running, or its logs expired." >&2
   exit 1
 fi
 
