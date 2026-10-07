@@ -8,6 +8,7 @@ A collection of reusable skills for Claude Code — portable across any project 
 |-------|-------------|
 | [helm-generic-checklist](helm-generic-checklist/) | Universal Helm chart quality checklist. Covers release naming, chart versioning, resources, probes, security, persistence, networking, scaling, RBAC, observability, and common pitfalls. |
 | [performant-infinite-scroll](performant-infinite-scroll/) | Production-grade infinite scroll for React / Next.js: cursor pagination + TanStack Query, virtualization (TanStack Virtual, virtua, react-virtuoso), prefetching ahead of the edge, App Router SSR, scroll restoration, bidirectional chat, and accessibility. |
+| [ship](ship/) | `/ship` a pull request: wait for green CI, run one `/code-review medium --fix`, re-check and push the fixes, wait for CI, merge, then audit the default-branch run logs for errors, warnings, flaky tests, and slow steps. User-invoked only. |
 
 ## Installation
 
