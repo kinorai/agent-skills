@@ -1,13 +1,21 @@
 ---
 name: helm-generic-checklist
-description: Universal Helm chart quality checklist applicable to any Kubernetes cluster. Use this skill when creating, reviewing, or auditing any Helm chart or values file — regardless of project, cluster, or cloud provider. Covers release naming, chart versioning, resources, probes, security, persistence, networking, scaling, RBAC, observability, and common Helm pitfalls. Trigger whenever working with Helm values, Chart.yaml, or Kubernetes manifests generated from Helm.
+description: Pre-deploy quality checklist for Helm charts on any Kubernetes cluster. Use when writing, changing, reviewing or auditing a values file, Chart.yaml, a vendored chart, or manifests rendered from Helm; when bumping a chart or image version; or when a Helm release fails to roll out (CrashLoopBackOff, ImagePullBackOff, pending PVC, failed probes). A project-specific deployment checklist, if one exists, adds its own conventions on top of this one.
 ---
 
 # Helm Quality Checklist
 
 A universal pre-deploy checklist for Helm charts. These checks apply to any Kubernetes cluster regardless of provider, size, or architecture.
 
-Run through the relevant sections after writing or modifying Helm values. Not every item applies to every service — skip what doesn't apply, but know why you're skipping it.
+## How to run it
+
+1. Read the final values the release will actually get: the chart's defaults merged with every override file, in order. `helm template` or `helm get values` shows them better than any single file does.
+2. Go through each section below. Mark every item **pass**, **fix** (with the change), or **n/a** (with a one-line reason). An item skipped without a reason is the one that bites later.
+3. Make the fixes, then render again (`helm template`, `helm lint`, `helm diff` if available) to confirm they landed.
+
+Report the outcome as a list of the **fix** items, then the **n/a** items with their reasons. Leave out the passes unless the user asks for them.
+
+**Done when:** every section has been checked against the merged values, every fix has been applied and re-rendered, and every n/a has a reason.
 
 ---
 
@@ -27,9 +35,9 @@ Run through the relevant sections after writing or modifying Helm values. Not ev
 
 ## Image
 
-**CRITICAL: Always verify the latest stable image tag before deploying.** Stale image tags are one of the most common deployment mistakes — you pin a version once and forget about it for months while security patches and bug fixes ship. Use web search, Docker Hub, or MCP tools to confirm the current latest stable release.
+**Check the current stable image tag against a live source before deploying.** Stale tags are the most common silent problem: a version gets pinned once and sits for months while security patches and bug fixes ship. Your memory of "the latest version" is stale by construction, so look it up on Docker Hub, the project's GitHub releases, or its docs.
 
-- [ ] **Latest stable version verified via web/MCP** — before writing or reviewing image tags, search Docker Hub / GitHub releases / official docs to confirm the current latest stable release. Do not rely on memory or training data — versions change frequently.
+- [ ] **Latest stable version verified against a live source** — Docker Hub, GitHub releases or the official docs, checked now.
 - [ ] **Image tag pinned to exact version + digest** — e.g. `postgres:18.3-bookworm@sha256:abcd...`. The digest makes the tag truly immutable. Version-only tags (`postgres:18.3`) can be overwritten by the publisher.
 - [ ] **Image repository confirmed** — correct registry, correct image name.
 - [ ] **Not using `latest`** — ever. It's mutable, uncacheable with `IfNotPresent`, and makes rollbacks impossible.
@@ -67,7 +75,7 @@ Every container must declare resource requests. Without them, the scheduler is g
 - [ ] **Service enabled/disabled intentionally** — not every container needs a Service (batch jobs, workers).
 - [ ] **Service type correct** — `ClusterIP` for internal (default and most common), `NodePort` for dev/testing, `LoadBalancer` for external exposure, `None` (headless) for StatefulSets needing stable DNS per pod.
 - [ ] **Service port and targetPort correct** — if the container listens on 8080, targetPort is 8080. The service port can be anything (commonly 80).
-- [ ] **Port names follow convention** — use protocol-based names (`http`, `https`, `grpc`, `tcp-<name>`) so service meshes can identify the protocol. Must be <= 15 characters (IANA constraint).
+- [ ] **Port names follow convention** — use protocol-based names (`http`, `https`, `grpc`, `tcp-<name>`) so service meshes can identify the protocol. Kubernetes rejects names over 15 characters (IANA): `prometheus-metrics` fails, `prom-metrics` works.
 
 ## Ingress / Exposure
 
@@ -108,10 +116,10 @@ Security must be hardened by default, not bolted on after deployment. Every depl
 - [ ] **No `privileged: true`** — gives the container full access to the host. Almost never needed. If you think you need it, you probably need a specific capability instead.
 - [ ] **`automountServiceAccountToken: false`** — unless the pod needs Kubernetes API access. Most application pods don't.
 
-### Application-Level Authentication
+### Application-Level Authentication (databases and other stateful services)
 - [ ] **No `trust` in pg_hba.conf or equivalent** — never allow unauthenticated connections, not even local socket. Use `scram-sha-256` (postgres), TLS client certs, or equivalent for every service.
 - [ ] **Strongest auth method used** — `scram-sha-256` over `md5` for PostgreSQL, bcrypt over plaintext for application passwords. Check what the application supports and use the strongest option.
-- [ ] **Default databases/schemas hardened** — `REVOKE CONNECT FROM PUBLIC` on template and default databases. `REVOKE ALL ON SCHEMA public FROM PUBLIC`. Prevent privilege creep from day one.
+- [ ] **Default databases/schemas hardened** — PostgreSQL grants CREATE on the `public` schema to everyone by default. In initdb, `REVOKE CONNECT FROM PUBLIC` on template and default databases and `REVOKE ALL ON SCHEMA public FROM PUBLIC`.
 - [ ] **Admin/debug endpoints disabled** — no phpMyAdmin, pgAdmin, Redis Commander exposed. No debug ports, profiling endpoints, or status pages accessible without auth.
 - [ ] **Password encryption enforced** — set `password_encryption = 'scram-sha-256'` or equivalent explicitly in config, not just in pg_hba.
 
@@ -217,11 +225,7 @@ Security must be hardened by default, not bolted on after deployment. Every depl
 
 ## Common Pitfalls
 
-- **Stale image tags** — the #1 silent issue. You pin `nginx:1.25.3` in January and deploy it in July while `1.27.1` has three CVE fixes. Always verify the latest stable release before deploying or reviewing. Use web search, Docker Hub API, or GitHub releases to check.
-- **Port name > 15 characters** — Kubernetes rejects port names longer than 15 characters (IANA constraint). `prometheus-metrics` is too long; use `prom-metrics`.
 - **Env var ordering** — in some charts, environment variables can reference each other. If `VAR_B` depends on `VAR_A`, `VAR_A` must be defined first. Not all chart templates preserve order.
 - **Empty string vs null** — in Helm values, `key: ""` and `key:` (null) are different. Some charts treat them differently. If removing a value, check whether the chart expects null or empty string.
 - **YAML gotchas** — `yes`/`no`/`on`/`off` are booleans in YAML 1.1. Quote them if you mean strings. Port `22` and version `1.20` are numbers — quote them if the chart expects strings.
 - **Large ConfigMaps** — Kubernetes has a 1MB limit on individual objects. If your values generate a ConfigMap with a large embedded config file, you'll hit this silently during `helm upgrade`.
-- **`trust` in pg_hba.conf** — allows unauthenticated connections. Never use `trust` in any environment, not even for local socket connections. Use `scram-sha-256`.
-- **Default `public` schema permissions** — PostgreSQL grants CREATE on the public schema to all users by default. Run `REVOKE ALL ON SCHEMA public FROM PUBLIC` in initdb.
