@@ -29,8 +29,14 @@ const config = (await import(pathToFileURL(path.resolve(scenarioFile)).href)).de
 const TOXI = process.env.TOXI_API ?? "http://127.0.0.1:8474/proxies/app";
 
 /** Network states through Toxiproxy (scripts/net.sh starts it). */
-const call = (url, init) => fetch(url, init).catch(() => {});
-export const net = {
+// Toxiproxy not running: a silent no-op. Running but refusing a toxic: say so,
+// or a "slow" recording is really a normal one. reset's DELETEs may 404.
+const call = (url, init) =>
+  fetch(url, init).then(
+    (r) => r.ok || r.status === 404 || console.warn(`toxiproxy ${init.method} ${url}: ${r.status}`),
+    () => {},
+  );
+const net = {
   /** Airplane mode: connections open but nothing ever comes back. */
   hang: async () => {
     for (const stream of ["upstream", "downstream"])
@@ -39,7 +45,7 @@ export const net = {
   /** Offline: connections refused at once. */
   down: () => call(TOXI, { method: "POST", body: JSON.stringify({ enabled: false }) }),
   /** A slow network: ms of latency on every answer. */
-  slow: (ms = 600) => call(`${TOXI}/toxics`, { method: "POST", body: JSON.stringify({ name: "slow", type: "latency", stream: "downstream", attributes: { latency: ms, jitter: ms / 3 } }) }),
+  slow: (ms = 600) => call(`${TOXI}/toxics`, { method: "POST", body: JSON.stringify({ name: "slow", type: "latency", stream: "downstream", attributes: { latency: ms, jitter: Math.round(ms / 3) } }) }),
   /** Back to normal: called before every scenario. */
   reset: async () => {
     for (const name of ["hang-upstream", "hang-downstream", "slow"]) await call(`${TOXI}/toxics/${name}`, { method: "DELETE" });
@@ -47,14 +53,15 @@ export const net = {
   },
 };
 
-// Runs in the page from its first byte.
+// Runs in the page from its first byte. Times are epoch ms, so they share a
+// clock with the frames and survive navigations.
 const watch = () => {
   window.__shifts = [];
   window.__swaps = [];
   new PerformanceObserver((list) => {
     for (const e of list.getEntries())
       if (!e.hadRecentInput)
-        window.__shifts.push({ t: Math.round(e.startTime), value: +e.value.toFixed(4), nodes: e.sources?.map((s) => s.node?.nodeName + (s.node?.className ? `.${String(s.node.className).split(" ")[0]}` : "")).slice(0, 3) });
+        window.__shifts.push({ t: Math.round(performance.timeOrigin + e.startTime), value: +e.value.toFixed(4), nodes: e.sources?.map((s) => s.node?.nodeName + (s.node?.className ? `.${String(s.node.className).split(" ")[0]}` : "")).slice(0, 3) });
   }).observe({ type: "layout-shift", buffered: true });
   const seen = new WeakMap();
   new MutationObserver((records) => {
@@ -62,7 +69,7 @@ const watch = () => {
       const el = r.target.nodeType === 3 ? r.target.parentElement : r.target;
       if (!el?.closest?.("h1,h2,h3,[role=status],[role=alert],output")) continue;
       const text = el.textContent?.trim().slice(0, 60);
-      if (seen.has(el) && seen.get(el) !== text) window.__swaps.push({ t: Math.round(performance.now()), el: el.tagName, text });
+      if (seen.has(el) && seen.get(el) !== text) window.__swaps.push({ t: Math.round(performance.timeOrigin + performance.now()), el: el.tagName, text });
       seen.set(el, text);
     }
   }).observe(document, { subtree: true, childList: true, characterData: true });
@@ -70,6 +77,19 @@ const watch = () => {
 
 const { defaultBrowserType, ...phone } = devices["iPhone 15"];
 const layouts = config.layouts ?? { phone, desktop: { viewport: { width: 1280, height: 800 } } };
+// CLS as browsers score it: the worst session window (shifts under 1 s apart,
+// the window at most 5 s long), not the sum of every shift.
+const clsOf = (shifts) => {
+  let worst = 0, sum = 0, start = -Infinity, last = -Infinity;
+  for (const { t, value } of shifts) {
+    if (t - last > 1000 || t - start > 5000) (sum = 0), (start = t);
+    sum += value;
+    last = t;
+    worst = Math.max(worst, sum);
+  }
+  return +worst.toFixed(4);
+};
+
 const browser = await chromium.launch();
 const summary = [];
 fs.mkdirSync(out, { recursive: true });
@@ -89,14 +109,16 @@ for (const [layout, device] of Object.entries(layouts))
       errors.push(`setup: ${e.message.split("\n")[0]}`);
     }
     const dir = path.join(out, `${layout}-${s.name}`);
+    fs.rmSync(dir, { recursive: true, force: true }); // no stale frames from a longer run
     fs.mkdirSync(dir, { recursive: true });
     const frames = [];
     const t0 = Date.now();
     const cdp = await context.newCDPSession(page);
-    cdp.on("Page.screencastFrame", async ({ data, sessionId }) => {
+    cdp.on("Page.screencastFrame", async ({ data, metadata, sessionId }) => {
       const file = `${String(frames.length).padStart(3, "0")}.jpg`;
       fs.writeFileSync(path.join(dir, file), Buffer.from(data, "base64"));
-      frames.push({ t: Date.now() - t0, file });
+      // The paint time, not when the frame reached us.
+      frames.push({ t: Math.round((metadata.timestamp ? metadata.timestamp * 1000 : Date.now()) - t0), file });
       await cdp.send("Page.screencastFrameAck", { sessionId }).catch(() => {});
     });
     await cdp.send("Page.startScreencast", { format: "jpeg", quality: 60, everyNthFrame: 1 });
@@ -108,7 +130,12 @@ for (const [layout, device] of Object.entries(layouts))
     await page.waitForTimeout(s.settleMs ?? 3000);
     await cdp.send("Page.stopScreencast").catch(() => {});
     const m = await page.evaluate(() => ({ shifts: window.__shifts, swaps: window.__swaps, url: location.pathname + location.search })).catch(() => ({}));
-    const cls = +(m.shifts ?? []).reduce((a, x) => a + x.value, 0).toFixed(4);
+    // Keep what happened while recording, on the frames' clock: setup's
+    // page load is not this transition's.
+    const since = (xs) => (xs ?? []).filter((x) => x.t >= t0).map((x) => ({ ...x, t: x.t - t0 }));
+    m.shifts = since(m.shifts);
+    m.swaps = since(m.swaps);
+    const cls = clsOf(m.shifts);
     const entry = { name: s.name, layout, frames, errors, ...m, cls };
     fs.writeFileSync(path.join(dir, "frames.json"), JSON.stringify(entry, null, 1));
     summary.push({ name: `${layout}-${s.name}`, frames: frames.length, cls, swaps: m.swaps?.length ?? 0, errors });
