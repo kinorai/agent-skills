@@ -7,7 +7,11 @@ set -e
 case "$1" in
   start)
     docker run -d --rm --name ui-filmstrip-toxi --network host ghcr.io/shopify/toxiproxy:latest >/dev/null
-    until curl -sf localhost:8474/version >/dev/null; do sleep 1; done
+    i=0
+    until curl -sf localhost:8474/version >/dev/null; do
+      i=$((i + 1)); [ "$i" -lt 30 ] || { echo "Toxiproxy did not answer on :8474" >&2; exit 1; }
+      sleep 1
+    done
     curl -sf -XPOST localhost:8474/proxies \
       -d "{\"name\":\"app\",\"listen\":\"127.0.0.1:$2\",\"upstream\":\"127.0.0.1:$3\"}" >/dev/null
     echo "app on http://localhost:$2 -> :$3 (Toxiproxy API :8474)" ;;

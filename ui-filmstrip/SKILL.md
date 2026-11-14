@@ -22,7 +22,7 @@ the project mounted at `/work`), one at a time.
 For network states, put Toxiproxy in front of the app:
 
 ```bash
-scripts/net.sh start 3200 3100   # the app on :3100, record against :3200
+<skill>/scripts/net.sh start 3200 3100   # the app on :3100, record against :3200
 ```
 
 A sign-up or sign-in through the proxy can fail its origin check (another
