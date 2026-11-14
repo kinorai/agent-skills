@@ -1,0 +1,6 @@
+interface:
+  short_description: "Coordinate parallel T3 Code workers from one thread"
+  default_prompt: "Use $t3-coordinator to plan this, run it as parallel workers, and bring me only the decisions."
+
+policy:
+  allow_implicit_invocation: false
