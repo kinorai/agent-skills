@@ -57,7 +57,8 @@ mkdir -p "$PLAN_DIR"   # inside .git: never committed, shared by all worktrees
 
 Outside a Git repo, use the thread's scratch folder.
 
-Name the file `<short-goal-slug>.md`. It holds:
+Name the file `<short-goal-slug>.md`. If a file with that name is left from an
+earlier run, read it first: resume that run, or pick a new slug. It holds:
 
 - **Goal**: one or two sentences, in the user's words.
 - **Rules**: what never happens without the user. Read the repo's
@@ -87,13 +88,18 @@ A good lane:
 - has a check that proves it is done: a test that fails before and passes
   after, a command with its exit code, or a page that renders.
 - fits in one worker's context. If it does not, split it in time (lane B
-  starts when lane A is merged), not in space.
+  starts when lane A is done), not in space. A new worktree starts at this
+  thread's commit, not at lane A's work, so lane B's brief names lane A's
+  branch as its **Base**.
 
 Run read-only lanes (research, review, reproduction) without a worktree.
+Nothing enforces read-only there: the child shares this thread's checkout,
+so its brief says "do not edit files", and a review brief gives the lane's
+worktree path.
 Run every lane that changes files with `isolation: "worktree"`.
 
 If the user wants a plan review first, run it as one read-only delegate on a
-different provider than yours, and fix the plan before dispatch.
+different provider than yours when step 0 found one, and fix the plan before dispatch.
 
 **Done when:** each lane has a scope, a done check and an owner model.
 
@@ -116,11 +122,13 @@ Plan file (read it first, do not edit it): <absolute path>
 Scope: <files or area you own>. Do not touch: <the other lanes' files>.
 Done when: <the check>, run by you, with its output.
 Rules: <the repo rules from the plan that apply to this lane>.
+Base: <branch>, or omit. If set, run `git reset --hard <branch>` first in
+your new worktree: it starts at the coordinator's commit, not at that work.
 Questions about this brief or about other lanes go to your parent
 (this coordinator), not to the user. Ask the user only for a permission,
 a secret or a sign-in.
 Report back, in this order:
-1. branch and head SHA, or "no changes"
+1. worktree path, branch and head SHA, or "no changes"
 2. each command you ran to prove it, with its exit code
 3. the files you changed
 4. what you did not do, and why
@@ -131,7 +139,8 @@ Write the owner link and state into the plan file after each dispatch.
 
 **Done when:** the first batch of workers runs. Then end your turn. Do not
 poll, sleep, or call `task_status` in a loop. T3 Code wakes you when a worker
-finishes or asks something.
+finishes or asks something. On each wake, read that worker's result once
+with `task_status`.
 
 ## 4. When a worker asks something
 
@@ -158,12 +167,15 @@ A worker's report is a claim. Before you mark a lane `done`:
    listed.
 2. Re-run its done check yourself when it is cheap (a test file, a build of
    one package). If it is not cheap, start a read-only checker delegate on a
-   different provider to run it and review the diff.
+   different provider (when step 0 found one) to run it in the lane's
+   worktree and review the diff.
 3. Compare the result with the lane's scope in the plan.
 
 If something is missing or wrong, start a **new** `delegate_task` with a
-targeted brief: what is missing, where, and the evidence. Do not send
-follow-ups to a finished worker.
+targeted brief: what is missing, where, and the evidence, with the lane's
+branch as its **Base** so it builds on the lane's commits. Its branch then
+replaces the lane's branch in the plan. Do not send follow-ups to a finished
+worker.
 
 Record the branch, head SHA and verdict in the plan file.
 
@@ -199,7 +211,6 @@ Lead with what needs the user. Keep it short.
 When every lane is `done` or dropped:
 
 - Cancel any delegate still running that you no longer need (`task_cancel`).
-- Unwatch any PR you watched.
 - Give the final report: what landed (branches, PRs, head SHAs), what you
   checked yourself and how, what was dropped and why, and the open
   questions.
