@@ -130,19 +130,20 @@ Classify each failure before acting on it:
 
 ## 6. Merge
 
-Use the method the repo allows, preferring squash:
+Use the merge method the repo's AGENTS.md/CLAUDE.md or the user's instructions
+name. Otherwise use a method the repo allows, preferring rebase:
 
 ```bash
 gh repo view --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed
-gh pr merge <n> --squash --match-head-commit <green-head-sha>
+gh pr merge <n> --rebase --delete-branch --match-head-commit <green-head-sha>
 ```
 
 - **`--match-head-commit`** merges only the commit CI just passed. If
   anything was pushed in the meantime, the merge fails instead of shipping
   unchecked code.
-- **Leave out `--delete-branch`.** It also deletes the local branch, which
-  breaks when that branch is checked out in a worktree. The repo's
-  auto-delete setting handles the remote branch.
+- **`--delete-branch`** deletes the remote branch. When the branch is checked
+  out in the worktree you merge from, gh skips the local delete with a warning
+  (cli/cli#14794); the branch goes when the worktree is removed.
 
 If a merge queue or a required review blocks the merge, **Stop** and report
 the state. Those are the repo's policies; leave them for the user.
