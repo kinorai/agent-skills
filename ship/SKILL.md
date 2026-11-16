@@ -135,7 +135,7 @@ name. Otherwise use a method the repo allows, preferring rebase:
 
 ```bash
 gh repo view --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed
-gh pr merge <n> --rebase --delete-branch --match-head-commit <green-head-sha>
+gh pr merge <n> --<rebase|squash|merge> --delete-branch --match-head-commit <green-head-sha>
 ```
 
 - **`--match-head-commit`** merges only the commit CI just passed. If
@@ -146,7 +146,9 @@ gh pr merge <n> --rebase --delete-branch --match-head-commit <green-head-sha>
   (cli/cli#14794); the branch goes when the worktree is removed.
 
 If a merge queue or a required review blocks the merge, **Stop** and report
-the state. Those are the repo's policies; leave them for the user.
+the state. Those are the repo's policies; leave them for the user. If GitHub
+cannot rebase the commits onto the base (a conflict), **Stop** too: do not
+switch to another merge method to get past it.
 
 **Done when:** `gh pr view <n> --json state,mergeCommit` shows `MERGED` and
 gives you the merge commit SHA.
