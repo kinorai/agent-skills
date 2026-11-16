@@ -9,7 +9,7 @@ A universal pre-deploy checklist for Helm charts. These checks apply to any Kube
 
 ## How to run it
 
-1. Read the final values the release will actually get: the chart's defaults merged with every override file, in order. `helm template` or `helm get values` shows them better than any single file does.
+1. Read the final values the release will actually get: the chart's defaults merged with every override file, in order. `helm template` shows them better than any single file does. Do not use `helm get values` or `helm get manifest`: they print secret values in clear.
 2. Go through each section below. Mark every item **pass**, **fix** (with the change), or **n/a** (with a one-line reason). An item skipped without a reason is the one that bites later.
 3. Make the fixes, then render again (`helm template`, `helm lint`, `helm diff` if available) to confirm they landed.
 
